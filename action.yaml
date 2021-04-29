@@ -1,0 +1,127 @@
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# !!!!!!!!!!!!!! This repository is public !!!!!!!!!!!!!!!!!!!!!!!!
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+# repo is public until Github Action supports cloning private repos
+# https://github.com/github/roadmap/issues/74
+name: 'Apply Kustomizations'
+description: 'Build and Apply Kustomizations with various optional wait'
+inputs:
+  namespace:
+    description: 'namespace to use (can be also created and/or deleted after use)'
+    required: true
+  base:
+    description: 'Kustomize base ready to build and apply'
+    required: true
+  image:
+    description: 'set an image via kustomize set image, format is image=registry:tag'
+    required: false
+  waitForJob:
+    description: 'K8s Job to wait for completion'
+    required: true
+  createNamespace:
+    description: '[true/false] whether to create the namespace, default to false'
+    required: false
+    default: 'false'
+  deleteNamespace:
+    description: '[true/false] whether to clean the namespace if the job complete in time'
+    required: false
+    default: 'false'
+  timeoutMinuteStartContainer:
+    description: 'how long to wait for pulling image and starting container, does not apply once the container is running. Use action timeout_minute to timeout the overall Job run'
+    required: false
+    default: "5"
+runs:
+  using: "composite"
+  steps:
+    - name: "Check inputs"
+      shell: bash
+      run: |
+        echo "     Check input:"
+        echo "namespace: ${{ inputs.namespace }}"
+        echo "base: ${{ inputs.base }}"
+        echo "image: ${{ inputs.image }}"
+        echo "waitForJob: ${{ inputs.waitForJob }}"
+        echo "createNamespace: ${{ inputs.createNamespace }}"
+        echo "deleteNamespace: ${{ inputs.deleteNamespace }}"
+
+    - name: "Create Namespace"
+      shell: bash
+      run: |
+        [[ "${{ inputs.createNamespace }}" != "true" ]] && exit 0
+        echo "     Re-create namespace"
+        kubectl delete namespace ${{ inputs.namespace }} || true
+        kubectl create namespace ${{ inputs.namespace }}
+
+    - name: "Build Kustomization"
+      shell: bash
+      run: |
+        echo "     Kustomize build"
+        $(cd ${{ inputs.base }} && kustomize edit set namespace ${{ inputs.namespace }})
+        [[ "${{ inputs.image }}" != "" ]] && echo "     Set image '${{ inputs.image }}'" && $(cd ${{ inputs.base }} && kustomize edit set image ${{ inputs.image }})
+        kustomize build --load_restrictor=none ${{ inputs.base }} -o manifests.yaml
+
+
+    - name: "Apply Kustomization"
+      shell: bash
+      run: |
+        echo "     Kubectl apply built manifests"
+        kubectl apply -f manifests.yaml
+
+
+    - name: "Handle Job"
+      shell: bash
+      run: |
+        jobName=${{ inputs.waitForJob }}
+        namespace=${{ inputs.namespace }}
+
+        [[ "${jobName}" == "" ]] && exit 0
+
+        echo "     Wait for job '${jobName}' to be done"
+
+        # first check if Job isn't already done (either with success or not)
+        kubectl -n ${namespace} wait --for=condition=complete --timeout=0s job/${jobName} 2> /dev/null && done=true ||
+        kubectl -n ${namespace} wait --for=condition=failed --timeout=0s job/${jobName} 2> /dev/null && done=true || true
+        if [[ "${done}" != "true" ]]; then
+          echo "     Waiting for Job pod to pull images and start containers (timeout ${{ inputs.timeoutMinuteStartContainer }} minutes)"
+          # wait until we don't get an error fetching logs or until end of timeout
+          finaldate=$(date -d " ${{ inputs.timeoutMinuteStartContainer }} minutes" +'%m/%d %H:%M')
+          ready=false
+          while [[ $ready != "true" ]]; do
+              [[ "$(date +'%m/%d %H:%M')" > "${finaldate}" ]] && echo "     Err: Timeout waiting for pods" && exit 1
+              echo "... waiting"
+              sleep 10
+              kubectl -n ${namespace} logs --tail=0 job/${jobName}  2> /dev/null && ready=true || true
+          done
+          echo "     Job is running"
+        else
+          echo "     Job is already done (logs might not be available if it complete too long ago)"
+        fi
+
+        # then try to get logs
+        echo "     Attempt to fetch logs"
+        echo "-----------------------------"
+        echo ""
+        kubectl -n ${namespace} logs -f job/${jobName} || true
+        echo ""
+        echo "-----------------------------"
+
+        # before checking final status
+        echo "     Job is done, checking final status"
+        # not elegant but the safest way to get the overall Job status as .failed and conditions start to get tricky
+        # to look into as long as more than backofflimit is not 0
+        kubectl -n ${namespace} wait --for=condition=complete --timeout=0s job/${jobName} && complete=true || true
+        if [[ "${complete}" == "true" ]]; then
+          echo "     Job final state is 'complete', it ended with sucess"
+        else
+          echo "     Job final state is not 'complete', it ended with failures"
+          echo "     Namespace ${{ inputs.deleteNamespace }} will not be deleted to allow debugging"
+          exit 1
+        fi
+
+    - name: "Clean Namespace"
+      shell: bash
+      run: |
+        [[ "${{ inputs.deleteNamespace }}" != "true" ]] && exit 0
+        echo "     Delete namespace"
+        kubectl delete namespace ${{ inputs.namespace }} || true
