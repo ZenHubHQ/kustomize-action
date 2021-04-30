@@ -77,8 +77,6 @@ runs:
 
         [[ "${jobName}" == "" ]] && exit 0
 
-        echo "     Wait for job '${jobName}' to be done"
-
         # first check if Job isn't already done (either with success or not)
         kubectl -n ${namespace} wait --for=condition=complete --timeout=0s job/${jobName} 2> /dev/null && done=true ||
         kubectl -n ${namespace} wait --for=condition=failed --timeout=0s job/${jobName} 2> /dev/null && done=true || true
@@ -88,7 +86,15 @@ runs:
           finaldate=$(date -d " ${{ inputs.timeoutMinuteStartContainer }} minutes" +'%m/%d %H:%M')
           ready=false
           while [[ $ready != "true" ]]; do
-              [[ "$(date +'%m/%d %H:%M')" > "${finaldate}" ]] && echo "     Err: Timeout waiting for pods" && exit 1
+              if [[ "$(date +'%m/%d %H:%M')" > "${finaldate}" ]]; then
+                  echo "     Err: Timeout waiting for pods"
+                  echo "     Attempting to get as much info as possible before exiting 1"
+                  set +x
+                  kubectl -n ${namespace} logs --tail=0 job/${jobName}  || true
+                  kubectl -n ${namespace} describe job/${jobName}  || true
+                  kubectl -n ${namespace} describe pod -l "job-name=${jobName}" || true
+                  exit 1
+              fi
               echo "... waiting"
               sleep 10
               kubectl -n ${namespace} logs --tail=0 job/${jobName}  2> /dev/null && ready=true || true
