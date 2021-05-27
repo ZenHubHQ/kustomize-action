@@ -117,7 +117,7 @@ runs:
         echo "     Job is done, checking final status"
         # not elegant but the safest way to get the overall Job status as .failed and conditions start to get tricky
         # to look into as long as more than backofflimit is not 0
-        kubectl -n ${namespace} wait --for=condition=complete --timeout=0s job/${jobName} && complete=true || true
+        kubectl -n ${namespace} wait --for=condition=complete --timeout=30s job/${jobName} && complete=true || true
         if [[ "${complete}" == "true" ]]; then
           echo "     Job final state is 'complete', it ended with sucess"
         else
