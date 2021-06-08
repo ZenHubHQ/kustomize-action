@@ -30,7 +30,7 @@ inputs:
   timeoutMinuteStartContainer:
     description: 'how long to wait for pulling image and starting container, does not apply once the container is running. Use action timeout_minute to timeout the overall Job run'
     required: false
-    default: "5"
+    default: "10"
 runs:
   using: "composite"
   steps:
