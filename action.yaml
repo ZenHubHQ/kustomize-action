@@ -72,7 +72,6 @@ runs:
     - name: "Handle Job"
       shell: bash
       run: |
-        set -x
         jobName=${{ inputs.waitForJob }}
         namespace=${{ inputs.namespace }}
 
