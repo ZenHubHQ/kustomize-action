@@ -121,19 +121,23 @@ runs:
                             --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].status.containerStatuses}' |\
                             jq -r '.[] | select( .name | contains("${{ inputs.waitForJob }}")) | .state.terminated.reason')
         pod_name=$(kubectl -n ${namespace} get pod -l job-name=${jobName} --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
+        # check if extractor container is present in job:
+        extractor=$(kubectl get pods -l job-name=${jobName} -o jsonpath={.items[*].spec.containers[*].name} | grep extractor)
         
         if [[ "${terminate_status}" == "Completed" ]]; then
           echo "     Job final state is 'complete', it ended with sucess"
+          # if extractor is not enabled, simply exit here
+          [[ "${extractor}" == "" ]] && exit 0
+          
           echo "     Extracting artifacts..."
           kubectl cp ${namespace}/"${pod_name}":/job_outputs ./ -c extractor
-          # kill extractor
           kubectl exec -n ${namespace}  ${pod_name} -c extractor -- sh -c 'rm -rf /tmp/runfile'
           exit 0
         else
           echo "     Job final state is not 'complete', it ended with failures"
           echo "     Namespace ${{ inputs.deleteNamespace }} will not be deleted to allow debugging"
-          # kill extractor
-          kubectl exec -n ${namespace}  ${pod_name} -c extractor -- sh -c 'rm -rf /tmp/runfile'
+          # kill extractor if it's present
+          [[ "${extractor}" != "" ]] && kubectl exec -n ${namespace}  ${pod_name} -c extractor -- sh -c 'rm -rf /tmp/runfile'
           exit 1
         fi
 
