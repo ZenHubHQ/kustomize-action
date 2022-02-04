@@ -73,9 +73,13 @@ runs:
       run: |
         set -x
         jobName=${{ inputs.waitForJob }}
-        namespace=${{ inputs.namespace }}
+        namespace=${{ inputs.namespace }}        
 
         [[ "${jobName}" == "" ]] && exit 0
+        
+        # check if we have extractor container, then we need explicitly specify main job container name in kubectl commands
+        extractor=$(kubectl get pods -l job-name=${jobName} -o jsonpath={.items[*].spec.containers[*].name} | grep extractor)
+        [[ "${extractor}" != "" ]] && container_selector="-c ${jobName}"
 
         # first check if Job isn't already done (either with success or not)
         kubectl -n ${namespace} wait --for=condition=complete --timeout=0s job/${jobName} 2> /dev/null && done=true ||
@@ -90,14 +94,14 @@ runs:
                   echo "     Err: Timeout waiting for pods"
                   echo "     Attempting to get as much info as possible before exiting 1"
                   set +x
-                  kubectl -n ${namespace} logs --tail=0 job/${jobName} -c ${jobName} || true
+                  kubectl -n ${namespace} logs --tail=0 job/${jobName} ${container_selector} || true
                   kubectl -n ${namespace} describe job/${jobName}  || true
                   kubectl -n ${namespace} describe pod -l "job-name=${jobName}" || true
                   exit 1
               fi
               echo "... waiting"
               sleep 10
-              kubectl -n ${namespace} logs --tail=0 job/${jobName} -c ${jobName} 2> /dev/null && ready=true || true
+              kubectl -n ${namespace} logs --tail=0 job/${jobName} ${container_selector} 2> /dev/null && ready=true || true
           done
           echo "     Job is running"
         else
@@ -108,7 +112,7 @@ runs:
         echo "     Attempt to fetch logs"
         echo "-----------------------------"
         echo ""
-        kubectl -n ${namespace} logs -f job/${jobName} -c ${jobName} || true
+        kubectl -n ${namespace} logs -f job/${jobName} ${container_selector} || true
         echo ""
         echo "-----------------------------"
 
@@ -122,7 +126,6 @@ runs:
                             jq -r '.[] | select( .name | contains("${{ inputs.waitForJob }}")) | .state.terminated.reason')
         pod_name=$(kubectl -n ${namespace} get pod -l job-name=${jobName} --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
         # check if extractor container is present in job:
-        extractor=$(kubectl get pods -l job-name=${jobName} -o jsonpath={.items[*].spec.containers[*].name} | grep extractor)
         
         if [[ "${terminate_status}" == "Completed" ]]; then
           echo "     Job final state is 'complete', it ended with sucess"
