@@ -119,7 +119,7 @@ runs:
         
         terminate_status=`kubectl -n ${namespace} get pod -l job-name=${jobName} \
                             --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].status.containerStatuses}' |\
-                            jq -r '.[] | select( .name | contains("${{ jobName }}")) | .state.terminated.reason'`
+                            jq -r '.[] | select( .name | contains("${ jobName }")) | .state.terminated.reason'`
         
         if [[ "${terminate_status}" == "Completed" ]]; then
           echo "     Job final state is 'complete', it ended with sucess"
