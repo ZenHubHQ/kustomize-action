@@ -69,6 +69,64 @@ runs:
         kubectl apply -f manifests.yaml
 
 
+#    - name: "Handle Job"
+#      shell: bash
+#      run: |
+#        set -x
+#        jobName=${{ inputs.waitForJob }}
+#        namespace=${{ inputs.namespace }}
+#
+#        [[ "${jobName}" == "" ]] && exit 0
+#
+#        # first check if Job isn't already done (either with success or not)
+#        kubectl -n ${namespace} wait --for=condition=complete --timeout=0s job/${jobName} 2> /dev/null && done=true ||
+#        kubectl -n ${namespace} wait --for=condition=failed --timeout=0s job/${jobName} 2> /dev/null && done=true || true
+#        if [[ "${done}" != "true" ]]; then
+#          echo "     Waiting for Job pod to pull images and start containers (timeout ${{ inputs.timeoutMinuteStartContainer }} minutes)"
+#          # wait until we don't get an error fetching logs or until end of timeout
+#          finaldate=$(date -d " ${{ inputs.timeoutMinuteStartContainer }} minutes" +'%m/%d %H:%M')
+#          ready=false
+#          while [[ $ready != "true" ]]; do
+#              if [[ "$(date +'%m/%d %H:%M')" > "${finaldate}" ]]; then
+#                  echo "     Err: Timeout waiting for pods"
+#                  echo "     Attempting to get as much info as possible before exiting 1"
+#                  set +x
+#                  kubectl -n ${namespace} logs --tail=0 job/${jobName}  || true
+#                  kubectl -n ${namespace} describe job/${jobName}  || true
+#                  kubectl -n ${namespace} describe pod -l "job-name=${jobName}" || true
+#                  exit 1
+#              fi
+#              echo "... waiting"
+#              sleep 10
+#              kubectl -n ${namespace} logs --tail=0 job/${jobName}  2> /dev/null && ready=true || true
+#          done
+#          echo "     Job is running"
+#        else
+#          echo "     Job is already done (logs might not be available if it complete too long ago)"
+#        fi
+#
+#        # then try to get logs
+#        echo "     Attempt to fetch logs"
+#        echo "-----------------------------"
+#        echo ""
+#        kubectl -n ${namespace} logs -f job/${jobName} || true
+#        echo ""
+#        echo "-----------------------------"
+#
+#        # before checking final status
+#        echo "     Job is done, checking final status"
+#        # not elegant but the safest way to get the overall Job status as .failed and conditions start to get tricky
+#        # to look into as long as more than backofflimit is not 0
+#        kubectl -n ${namespace} wait --for=condition=complete --timeout=30s job/${jobName} && complete=true || true
+#        if [[ "${complete}" == "true" ]]; then
+#          echo "     Job final state is 'complete', it ended with sucess"
+#        else
+#          echo "     Job final state is not 'complete', it ended with failures"
+#          echo "     Namespace ${{ inputs.deleteNamespace }} will not be deleted to allow debugging"
+#          exit 1
+#        fi
+
+
     - name: "Handle Job"
       shell: bash
       run: |
@@ -91,14 +149,14 @@ runs:
                   echo "     Err: Timeout waiting for pods"
                   echo "     Attempting to get as much info as possible before exiting 1"
                   set +x
-                  kubectl -n ${namespace} logs --tail=0 job/${jobName}  || true
+                  kubectl -n ${namespace} logs --tail=0 job/${jobName} -c ${jobName} || true
                   kubectl -n ${namespace} describe job/${jobName}  || true
                   kubectl -n ${namespace} describe pod -l "job-name=${jobName}" || true
                   exit 1
               fi
               echo "... waiting"
               sleep 10
-              kubectl -n ${namespace} logs --tail=0 job/${jobName}  2> /dev/null && ready=true || true
+              kubectl -n ${namespace} logs --tail=0 job/${jobName} -c ${jobName} 2> /dev/null && ready=true || true
           done
           echo "     Job is running"
         else
