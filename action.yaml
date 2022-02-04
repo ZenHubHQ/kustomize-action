@@ -167,7 +167,7 @@ runs:
         echo "     Attempt to fetch logs"
         echo "-----------------------------"
         echo ""
-        kubectl -n ${namespace} logs -f job/${jobName} || true
+        kubectl -n ${namespace} logs -f job/${jobName} -c ${jobName} || true
         echo ""
         echo "-----------------------------"
 
