@@ -175,14 +175,37 @@ runs:
         echo "     Job is done, checking final status"
         # not elegant but the safest way to get the overall Job status as .failed and conditions start to get tricky
         # to look into as long as more than backofflimit is not 0
-        kubectl -n ${namespace} wait --for=condition=complete --timeout=30s job/${jobName} && complete=true || true
-        if [[ "${complete}" == "true" ]]; then
+        
+        terminate_status=`kubectl -n ${namespace} get pod -l job-name=${jobName} \
+                            --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].status.containerStatuses}' |\
+                            jq -r '.[] | select( .name | contains("${{ jobName }}")) | .state.terminated.reason'`
+        
+#        kubectl -n ${namespace} wait --for=condition=complete --timeout=30s job/${jobName} && complete=true || true
+
+        if [[ "${terminate_status}" == "Completed" ]]; then
           echo "     Job final state is 'complete', it ended with sucess"
+          echo "     Extracting artifacts..."
+          pod_name=$(kubectl -n ${namespace} get pod -l job-name=${jobName} --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
+          kubectl cp ${namespace}/"${pod_name}":/job_outputs ./ -c extractor
+          # kill extractor
+          kubectl exec -n ${namespace}  ${pod_name} -c extractor -- sh -c 'rm -rf /tmp/runfile'
+          exit 0
         else
           echo "     Job final state is not 'complete', it ended with failures"
           echo "     Namespace ${{ inputs.deleteNamespace }} will not be deleted to allow debugging"
+          # kill extractor
+          kubectl exec -n ${namespace}  ${pod_name} -c extractor -- sh -c 'rm -rf /tmp/runfile'
           exit 1
         fi
+
+
+#        if [[ "${complete}" == "true" ]]; then
+#          echo "     Job final state is 'complete', it ended with sucess"
+#        else
+#          echo "     Job final state is not 'complete', it ended with failures"
+#          echo "     Namespace ${{ inputs.deleteNamespace }} will not be deleted to allow debugging"
+#          exit 1
+#        fi
 
     - name: "Clean Namespace"
       shell: bash
