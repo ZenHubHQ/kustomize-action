@@ -123,7 +123,8 @@ runs:
         
         terminate_status=$(kubectl -n ${namespace} get pod -l job-name=${jobName} \
                             --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].status.containerStatuses}' |\
-                            jq -r '.[] | select( .name | contains("${{ inputs.waitForJob }}")) | .state.terminated.reason')
+                            jq -r '.[] | select( .name | contains("extractor") | not ) | .state.terminated.reason')
+        
         pod_name=$(kubectl -n ${namespace} get pod -l job-name=${jobName} --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
         # check if extractor container is present in job:
         
