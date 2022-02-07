@@ -78,7 +78,7 @@ runs:
         [[ "${jobName}" == "" ]] && exit 0
         
         # check if we have extractor container, then we need explicitly specify main job container name in kubectl commands
-        extractor=$(kubectl get pods -l job-name=${jobName} -o jsonpath={.items[*].spec.containers[*].name} | grep extractor || true)
+        extractor=$(kubectl get pods -n ${namespace} -l job-name=${jobName} -o jsonpath={.items[*].spec.containers[*].name} | grep extractor || true)
         [[ "${extractor}" != "" ]] && container_selector="-c ${jobName}"
 
         # first check if Job isn't already done (either with success or not)
