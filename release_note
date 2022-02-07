@@ -1,3 +1,2 @@
-First Release
-* build Kustomization and apply it
-* wait for one Job to be started before tailing its logs before asserting its final state
+v1.2
+* add support for exporting job outputs to shared folder
