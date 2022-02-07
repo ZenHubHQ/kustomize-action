@@ -68,7 +68,6 @@ runs:
         echo "     Kubectl apply built manifests"
         kubectl apply -f manifests.yaml
 
-
     - name: "Handle Job"
       shell: bash
       run: |
@@ -76,6 +75,10 @@ runs:
         namespace=${{ inputs.namespace }}
 
         [[ "${jobName}" == "" ]] && exit 0
+        
+        # check if we have extractor container, then we need explicitly specify main job container name in kubectl commands
+        extractor=$(kubectl get pods -n ${namespace} -l job-name=${jobName} -o jsonpath={.items[*].spec.containers[*].name} | grep extractor || true)
+        [[ "${extractor}" != "" ]] && container_selector="-c ${jobName}"
 
         # first check if Job isn't already done (either with success or not)
         kubectl -n ${namespace} wait --for=condition=complete --timeout=0s job/${jobName} 2> /dev/null && done=true ||
@@ -90,14 +93,14 @@ runs:
                   echo "     Err: Timeout waiting for pods"
                   echo "     Attempting to get as much info as possible before exiting 1"
                   set +x
-                  kubectl -n ${namespace} logs --tail=0 job/${jobName}  || true
+                  kubectl -n ${namespace} logs --tail=0 job/${jobName} ${container_selector} || true
                   kubectl -n ${namespace} describe job/${jobName}  || true
                   kubectl -n ${namespace} describe pod -l "job-name=${jobName}" || true
                   exit 1
               fi
               echo "... waiting"
               sleep 10
-              kubectl -n ${namespace} logs --tail=0 job/${jobName}  2> /dev/null && ready=true || true
+              kubectl -n ${namespace} logs --tail=0 job/${jobName} ${container_selector} 2> /dev/null && ready=true || true
           done
           echo "     Job is running"
         else
@@ -108,7 +111,7 @@ runs:
         echo "     Attempt to fetch logs"
         echo "-----------------------------"
         echo ""
-        kubectl -n ${namespace} logs -f job/${jobName} || true
+        kubectl -n ${namespace} logs -f job/${jobName} ${container_selector} || true
         echo ""
         echo "-----------------------------"
 
@@ -116,12 +119,27 @@ runs:
         echo "     Job is done, checking final status"
         # not elegant but the safest way to get the overall Job status as .failed and conditions start to get tricky
         # to look into as long as more than backofflimit is not 0
-        kubectl -n ${namespace} wait --for=condition=complete --timeout=30s job/${jobName} && complete=true || true
-        if [[ "${complete}" == "true" ]]; then
+        
+        terminate_status=$(kubectl -n ${namespace} get pod -l job-name=${jobName} \
+                            --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].status.containerStatuses}' |\
+                            jq -r '.[] | select( .name | contains("extractor") | not ) | .state.terminated.reason')
+        
+        pod_name=$(kubectl -n ${namespace} get pod -l job-name=${jobName} --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
+        
+        if [[ "${terminate_status}" == "Completed" ]]; then
           echo "     Job final state is 'complete', it ended with sucess"
+          # if extractor is not enabled, simply exit here
+          [[ "${extractor}" == "" ]] && exit 0
+          
+          echo "     Extract artifacts and trigger extractor container termination..."
+          kubectl cp ${namespace}/"${pod_name}":/job_outputs ./ -c extractor
+          kubectl exec -n ${namespace}  ${pod_name} -c extractor -- sh -c 'rm -rf /tmp/runfile'
+          exit 0
         else
           echo "     Job final state is not 'complete', it ended with failures"
           echo "     Namespace ${{ inputs.deleteNamespace }} will not be deleted to allow debugging"
+          # kill extractor if it's present
+          [[ "${extractor}" != "" ]] && kubectl exec -n ${namespace}  ${pod_name} -c extractor -- sh -c 'rm -rf /tmp/runfile'
           exit 1
         fi
 
