@@ -121,7 +121,7 @@ runs:
         # to look into as long as more than backofflimit is not 0
         
         terminate_status="null"
-        while [[ $terminate_status == "null" ]]
+        while [[ $terminate_status == "null" ]]; do
           terminate_status=$(kubectl -n ${namespace} get pod -l job-name=${jobName} \
                               --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].status.containerStatuses}' |\
                               jq -r '.[] | select( .name | contains("extractor") | not ) | .state.terminated.reason')
