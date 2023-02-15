@@ -126,6 +126,7 @@ runs:
                               --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].status.containerStatuses}' |\
                               jq -r '.[] | select( .name | contains("extractor") | not ) | .state.terminated.reason')
           echo "fetching terminate status for job: $terminate_status"
+          sleep 5
         done
         
         pod_name=$(kubectl -n ${namespace} get pod -l job-name=${jobName} --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
