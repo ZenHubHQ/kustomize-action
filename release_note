@@ -1,2 +1,2 @@
-v1.2
-* add support for exporting job outputs to shared folder
+v1.3
+* detect the extractor container from the Job's pod template, so the check works before the Job controller creates the pod
