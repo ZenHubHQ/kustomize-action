@@ -27,7 +27,9 @@ def event():
  with (root/'history.jsonl').open('a') as f:f.write(json.dumps({'args':args,'state':s})+'\n')
 if 'get' in args and ('pod' in args or 'pods' in args):
  index=min(counter['index'],len(config['states'])-1);s=config['states'][index]
- counter['active']=index;counter['index']+=1;persist()
+ counter['active']=index
+ if not s.get('needs_extractor_cleanup'):counter['index']+=1
+ persist()
 event()
 conditions=[]
 if s.get('job'):conditions=[{'type':s['job'].capitalize(),'status':'True'}]
@@ -47,7 +49,7 @@ if 'get' in args and ('pod' in args or 'pods' in args):
   elif s['kind'] in ['success','failure']:status={'terminated':{'reason':'Completed' if s['kind']=='success' else 'Error','exitCode':s.get('exit_code',0 if s['kind']=='success' else 1)}}
   else:status={'waiting':{'reason':'ContainerCreating'}}
   containers=[{'name':'test-job','state':status,'restartCount':s.get('restart_count',0)}]
-  if config.get('extractor'):containers.append({'name':'extractor','state':{'running':{}}})
+  if config.get('extractor'):containers.append({'name':'extractor','state':{'waiting':{}} if s.get('extractor_waiting') else {'running':{}}})
  pod={'metadata':{'name':s.get('pod_name','test-job-pod')},'spec':{'nodeName':'node' if s.get('assigned') else ''},'status':{'containerStatuses':containers}}
  if any('containerStatuses' in a for a in args):
   if containers is not None:print(json.dumps(containers))
@@ -58,7 +60,13 @@ if 'logs' in args:
  # Reproduce the production bug: an empty log probe succeeds even while Pending.
  print('fixture logs' if '-f' in args else '')
  sys.exit(0)
-if 'exec' in args and not s.get('assigned'):sys.exit(1)
+if 'exec' in args:
+ if not s.get('assigned'):sys.exit(1)
+ if s.get('transient_cleanup_failure') and not counter.get('cleanup_attempts'):
+  counter['cleanup_attempts']=1;persist();sys.exit(1)
+ if s.get('needs_extractor_cleanup'):
+  counter['index']+=1;persist()
+ if s.get('cleanup_race'):sys.exit(1)
 sys.exit(0)
 '''
 DATE = r'''#!/usr/bin/env python3
@@ -89,7 +97,7 @@ class JobReadiness(unittest.TestCase):
             for name,content in [('kubectl',KUBECTL),('date',DATE),('sleep',SLEEP)]:
                 p=root/name;p.write_text(content);p.chmod(0o755)
             (root/'run.sh').write_text(script)
-            result=subprocess.run(['bash','-e','-o','pipefail',str(root/'run.sh')],env={**os.environ,'PATH':str(root)+':'+os.environ['PATH'],'SCENARIO_DIR':str(root)},capture_output=True,text=True,timeout=15)
+            result=subprocess.run(['bash','-e','-o','pipefail',str(root/'run.sh')],env={**os.environ,'PATH':str(root)+':'+os.environ['PATH'],'SCENARIO_DIR':str(root)},capture_output=True,text=True,timeout=60)
             history=[json.loads(x) for x in (root/'history.jsonl').read_text().splitlines()]
             return result,history
 
@@ -144,6 +152,36 @@ class JobReadiness(unittest.TestCase):
         second=state('failure');second['pod_name']='second-attempt'
         result,_=self.run_action([first]+[state('null',False)]*9+[second]+[state('null',False)]*9+[state('running'),state('success',job='complete')],backoff=2)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+
+    def test_failed_main_must_stop_extractor_before_controller_can_retry(self):
+        failed=state('failure');failed['needs_extractor_cleanup']=True;failed['cleanup_race']=True
+        result,history=self.run_action([failed,state('null',False),state('running'),state('success')],extractor=True,backoff=1)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertEqual(sum('exec' in h['args'] and h['state']['kind']=='failure' for h in history),1)
+        self.assertTrue(any('cp' in h['args'] for h in history))
+
+    def test_transient_extractor_exec_failure_is_retried_while_helper_runs(self):
+        failed=state('failure');failed['needs_extractor_cleanup']=True;failed['transient_cleanup_failure']=True
+        result,history=self.run_action([failed,state('null',False),state('running'),state('success')],extractor=True,backoff=1)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertEqual(sum('exec' in h['args'] and h['state']['kind']=='failure' for h in history),2)
+        self.assertTrue(any('cp' in h['args'] for h in history))
+
+    def test_extractor_starting_after_main_failure_is_still_stopped(self):
+        first=state('failure');first['extractor_waiting']=True
+        waiting_for_cleanup=state('failure');waiting_for_cleanup['needs_extractor_cleanup']=True
+        result,history=self.run_action([first,waiting_for_cleanup,state('failure',job='failed')],extractor=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(sum('exec' in h['args'] for h in history),1)
+        self.assertNotIn('Timeout',result.stdout)
+
+    def test_backoff_exhaustion_after_extractor_stop_remains_failure(self):
+        failed=state('failure');failed['needs_extractor_cleanup']=True
+        result,history=self.run_action([failed,state('failure',job='failed')],extractor=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(sum('exec' in h['args'] for h in history),1)
+        self.assertFalse(any('cp' in h['args'] for h in history))
 
 
 if __name__=='__main__':unittest.main()

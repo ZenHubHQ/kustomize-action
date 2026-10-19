@@ -83,6 +83,7 @@ runs:
         last_streamed_pod=""
         last_streamed_instance=""
         last_failed_instance=""
+        last_stopped_extractor_instance=""
 
         # Read the template before Pods exist; never infer readiness from empty logs.
         job_json=$(kubectl -n "$namespace" get job "$jobName" -o json)
@@ -97,6 +98,19 @@ runs:
           if [[ -n "$node_name" && -n "$pod_name" && "$pod_name" != "$last_streamed_pod" ]]; then
             kubectl -n "$namespace" logs "$pod_name" -c "$main_container" || true
             last_streamed_pod="$pod_name"
+          fi
+        }
+
+        stop_running_extractor() {
+          if [[ -n "$extractor" && -n "$node_name" && "$pod_name:$container_instance" != "$last_stopped_extractor_instance" ]] && jq -e --arg name "$extractor" '
+            any((.items[-1].status.containerStatuses // [])[]; .name == $name and .state.running != null)
+          ' <<< "$pods_json" >/dev/null; then
+            echo "     Stop extractor after failed main container in $pod_name"
+            # The helper may exit between observation and exec. Retry API errors while
+            # it still runs, within the bounded startup window; preserve the Job result.
+            if kubectl exec -n "$namespace" "$pod_name" -c "$extractor" -- sh -c 'rm -rf /tmp/runfile'; then
+              last_stopped_extractor_instance="$pod_name:$container_instance"
+            fi
           fi
         }
 
@@ -137,6 +151,9 @@ runs:
           fi
 
           if [[ -n "$node_name" ]] && jq -e '.terminated != null and .terminated.exitCode != 0' <<< "$main_state" >/dev/null; then
+            # The helper can start after the main exits; stop it once it is running.
+            # Otherwise it prevents the Pod failing and the Job retrying.
+            stop_running_extractor
             if [[ "$pod_name:$container_instance" != "$last_failed_instance" ]]; then
               show_terminal_logs
               startup_deadline=$(( $(date +%s) + timeout_seconds ))
@@ -172,11 +189,7 @@ runs:
         done
 
         # Preserve the real Job failure; cleanup must not run against an unscheduled Pod.
-        if [[ -n "$extractor" && -n "$node_name" ]] && jq -e --arg name "$extractor" '
-          any((.items[-1].status.containerStatuses // [])[]; .name == $name and .state.running != null)
-        ' <<< "$pods_json" >/dev/null; then
-          kubectl exec -n "$namespace" "$pod_name" -c "$extractor" -- sh -c 'rm -rf /tmp/runfile' || true
-        fi
+        stop_running_extractor
         echo "     Namespace will not be deleted to allow debugging"
         exit 1
 
