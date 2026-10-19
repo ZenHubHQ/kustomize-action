@@ -1,2 +1,3 @@
 v1.3
 * detect the extractor container from the Job's pod template, so the check works before the Job controller creates the pod
+* keep waiting when a pod has no container termination status yet
