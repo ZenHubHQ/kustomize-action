@@ -1,2 +1,3 @@
-v1.3
-* detect the extractor container from the Job's pod template, so the check works before the Job controller creates the pod
+v1.4
+* wait for assigned main-container state instead of log-probe success
+* wait through Pending/retry Pods and preserve terminal Job failures and extractor cleanup
